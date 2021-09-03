@@ -94,6 +94,14 @@ class Player():
         except Exception as error:
             print('Make sure the device you intend to play the track on is available and try again.')
 
+    def resume_track(self, track_index, position_ms):
+        try:
+            self.sp.start_playback(uris=[f'spotify:track:{self.track_ids[track_index]}'], 
+                            device_id=self.macbook_player, 
+                            position_ms=position_ms)
+        except Exception as error:
+            print('Make sure the device you intend to play the track on is available and try again.')
+
     def set_volume(self, volume_pct):
         self.sp.volume(volume_pct)
 
@@ -138,7 +146,7 @@ class Card():
         f.write("</table>"+newline)
 
     def view_html(self):
-        filename = 'file:///Users/stephenharding/mycode/Python/spotify_3.9/flask/cards.html'
+        filename = 'file:///Users/stephenharding/mycode/Python/spotify_3.9/mingo/cards.html'
         webbrowser.open_new_tab(filename)
 
 
@@ -193,6 +201,8 @@ class Game():
         self.player = Player(self.track_ids, sp)
         self.played_tracks = []
         self.unplayed_tracks = []
+        self.paused_at_ms = None
+        self.current_track_idx = None
         for idx in range(len(self.track_ids)):
             self.unplayed_tracks.append(idx)
         print(f'Created a Mingo game with {n_cards} cards')
@@ -210,13 +220,28 @@ class Game():
         print(f'Played so far: {self.played_tracks}')
         now_playing = self.track_info[track_idx]
         artist = self.track_artists[track_idx]
+        self.current_track_idx = track_idx
 
         print(f'Now playing: "{now_playing}" by "{artist}"')
         self.player.play_track(track_idx)
 
     def pause(self):
         self.player.pause_playback()
+        self.paused_at_ms = self.currently_playing()[0]
 
+    def resume(self):
+        if self.paused_at_ms:
+            self.player.resume_track(self.current_track_idx, self.paused_at_ms)
+            self.paused_at_ms = None
+        else:
+            print('Nothing was paused, so cannot resume!')
+
+
+    def currently_playing(self):
+        track = self.sp.current_user_playing_track()
+        is_playing = track['is_playing']
+        progress = track['progress_ms']
+        return progress, is_playing
 
     def view_in_browser(self, card_num=None):
         with open(save_path, 'w') as f:
@@ -266,7 +291,7 @@ class Game():
                 f.write("<br class='page'/>")
             f.write("\n")
 
-        filename = 'file:///Users/stephenharding/mycode/Python/spotify_3.9/flask/cards.html'
+        filename = 'file:///Users/stephenharding/mycode/Python/spotify_3.9/mingo/cards.html'
         webbrowser.open_new_tab(filename)
 
 
@@ -353,14 +378,32 @@ class CommandProcessor(cmd.Cmd):
     def do_pause(self, _):
         if self.active_game:
             self.active_game.pause()
+            resume_at = self.active_game.currently_playing()[0]
+            print(f'Paused after {resume_at} msec')
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
-       
+    
+    def do_resume(self,_):
+        if self.active_game:
+            self.active_game.resume()
+        else:
+               print('There is not an active game. Create one using "'"makegame"'" and try again.')  
+
+
+    def do_currentlyplaying(self, _):
+        if self.active_game:
+            progress = self.active_game.currently_playing()[0]
+            print(f'The track has been playing for {progress} msec')
+        else:
+           print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
     def do_EOF(self, line):
         """Press ctrl-d to exit this program"""
-        if self.active_game:
-            self.active_game.pause()
+        try:
+            if self.active_game and self.active_game.currently_playing()[1]:
+                self.active_game.pause()
+        except:
+            pass
         return True
 
 if __name__ == '__main__':
