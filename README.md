@@ -12,11 +12,11 @@ you sign on.
 
 The environment variables can be set from a script. For example, save the following in set_env.sh.
 
-`
-export SPOTIPY_CLIENT_ID="your-app-client-id"
-export SPOTIPY_CLIENT_SECRET="your-app-client-secret"
-export SPOTIPY_REDIRECT_URI="http://127.0.0.1:8080"
-`
+`export SPOTIPY_CLIENT_ID="your-app-client-id"`
+
+`export SPOTIPY_CLIENT_SECRET="your-app-client-secret"`
+
+`export SPOTIPY_REDIRECT_URI="http://127.0.0.1:8080"`
 
 Run this script as follows so it sets the values in the current shell where it is being executed:
 
