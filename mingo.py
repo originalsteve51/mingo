@@ -354,17 +354,17 @@ class CommandProcessor(cmd.Cmd):
 
     def do_makegame(self, num_cards):
         """Use the currently active playlist to generate a specified number of Mingo cards."""
-        if num_cards:
-            try:
-                self.active_game = Game(int(num_cards), self.sp)
-                self.prompt = f'({self.active_game.playlist_name})'
-                print(f'A new game has been made with {num_cards} cards.')
-                print('\nYou can use the "gamecards" command to display and print the Mingo cards for this game.')
-                print('You can begin playing tracks in random order by using the "playtrack" command for each track.')
-            except Exception as error:
-                print(error)
-        else:
-            print('You must specify the number of game cards to make for the game.')  
+        if not num_cards:
+            num_cards = '10'
+
+        try:
+            self.active_game = Game(int(num_cards), self.sp)
+            self.prompt = f'({self.active_game.playlist_name})'
+            print(f'A new game has been made with {num_cards} cards.')
+            print('\nYou can use the "gamecards" command to display and print the Mingo cards for this game.')
+            print('You can begin playing tracks in random order by using the "playtrack" command for each track.')
+        except Exception as error:
+            print(error)
 
     def do_view(self, card_num):
         """View a single Mingo card from the active Mingo game."""
@@ -408,6 +408,11 @@ class CommandProcessor(cmd.Cmd):
         else:
                print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
+    def do_showplayers(self, _):
+        if self.active_game:
+            self.active_game.player.show_available_players()
+        else:
+            print('There is not an active game, so players cannot be listed.')
 
     def do_currentlyplaying(self, _):
         if self.active_game:
