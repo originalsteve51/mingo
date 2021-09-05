@@ -1,6 +1,9 @@
 # Music Bingo: mingo
-This is a Python implementation of the Music Bingo bar game, aka MINGO. 
+This is a Python implementation of the Music Bingo game, aka MINGO.
+Credit goes to [Floris den Hengst](https://github.com/florisdenhengst), who proposed a design and wrote code that
+I used when I made this program.
 
+Notes about this Mingo game:
 - It is command-line oriented. 
 - It requires a subscription to the
 Spotify music service. A Spotify application that is configured using the Spotify Developer API web page is necessary.
