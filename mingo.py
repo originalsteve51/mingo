@@ -244,8 +244,21 @@ class Game():
         return progress, is_playing
 
     def view_in_browser(self, card_num=None):
+        '''
+        Renders a mingo card using html, saves the html to a file, and shows it in the default browser.
+
+            parameters:
+                card_num: The index of a mingo card to render. If None, show all cards.
+
+            returns:
+                None
+        '''
         with open(save_path, 'w') as f:
             f.write("<html>")
+
+            # First write a css that provides a good table rendering for mingo cards.
+            # This also will cause two cards per page when printing the browser
+            # display of the cards.
             f.write("""
             <head>
                 <style>
@@ -292,7 +305,13 @@ class Game():
             f.write("\n")
 
         filename = 'file:///Users/stephenharding/mycode/Python/spotify_3.9/mingo/cards.html'
-        webbrowser.open_new_tab(filename)
+        browser = webbrowser.get('firefox')
+        browser.open(filename)
+        # The call below was originally used. It opened the cards in the default browser,
+        # which is Chrome on my machine. But Chrome has problems with the css print definition
+        # for br.page that is used to insert a page break when printing. Firefox works, so
+        # I needed to specify non-default browser firefox as seen above...
+        #webbrowser.open_new_tab(filename)
 
 
 class CommandProcessor(cmd.Cmd):
