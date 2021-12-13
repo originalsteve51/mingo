@@ -1,3 +1,28 @@
+"""
+MIT License
+
+Copyright (c) 2021 Stephen Harding
+Copyright (c) 2019 Floris den Hengst
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
 import random
 import cmd
 import webbrowser
@@ -213,6 +238,16 @@ class Game():
         else:
             return self.cards[card_num] 
     
+
+    def show_status(self):
+        if self.played_tracks:
+            unordered_tracks = list(self.played_tracks)
+            self.played_tracks.sort()
+            print(f'Played {self.played_tracks} so far...')
+            self.played_tracks = unordered_tracks
+        else:
+            print('No tracks have been played yet')
+
     def play_track(self):
         track_idx = random.choice(self.unplayed_tracks)
         self.unplayed_tracks.remove(track_idx)
@@ -270,7 +305,7 @@ class Game():
                 text-align: center;
                 vertical-align: middle;
                 border: 1px solid black;
-                        font-size: 9pt;
+                        font-size: 19pt;
                         font-family: Arial, Helvetica, sans-serif;
                     }
                     img {
@@ -293,10 +328,13 @@ class Game():
                     card = self.get_card(i)
                     f.write(f"<h3>{card.playlist_name}, Card number {i}  </h3>")
                     card.as_html(f, False)
+                    f.write("<br class='page'/>")
+                    """
                     if (i+1) % 2 == 0:
                         f.write("<br class='page'/>")
                     else:
                         f.write("<br class='space'/>")
+                    """
             else:
                 card = self.get_card(int(card_num))
                 f.write(f"<h3>{card.playlist_name}, Card number {card_num} </h3>")
@@ -347,6 +385,12 @@ class CommandProcessor(cmd.Cmd):
             self.pl.process_playlist(list_number, False)
         else:
             print('You must enter the number of a playlist to show its tracks')
+    
+    def do_status(self, line):
+        if self.active_game:
+            self.active_game.show_status()
+        else:
+            print('There is not an active game, so no status is available')
 
     def do_userinfo(self, line):
         """Show the name of the signed-on Spotify user whose playlists are to be used to generate Mingo games."""
