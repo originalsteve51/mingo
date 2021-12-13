@@ -13,6 +13,7 @@ Before running the code you need to set some environment variables that Spotipy 
 for access to the Spotify API. These are obtained from the Spotify API dashboard after
 you sign on.
 
+## Set the environment without starting the program with set_env.sh
 The environment variables can be set from a script. For example, save the following in set_env.sh.
 
 `export SPOTIPY_CLIENT_ID="your-app-client-id"`
@@ -24,3 +25,14 @@ The environment variables can be set from a script. For example, save the follow
 Run this script as follows so it sets the values in the current shell where it is being executed:
 
 `. ./set_env.sh`
+
+With the environment set, you can invoke the program directly:
+
+./python mingo.py
+
+## Start the program in a Python environment that has the Spotipy library
+Modify the exports in run_mingo.py with your Spotify API access information.
+
+Run as follows:
+
+`./run_mingo.py
