@@ -28,11 +28,11 @@ Run this script as follows so it sets the values in the current shell where it i
 
 With the environment set, you can invoke the program directly:
 
-python mingo.py
+`python mingo.py`
 
 ### Start the program in a Python environment that has the Spotipy library
 Modify the exports in run_mingo.py with your Spotify API access information.
 
 Run as follows:
 
-`./run_mingo.py
+`./run_mingo.py`
