@@ -1,8 +1,8 @@
 """
 MIT License
 
-Copyright (c) 2021 Stephen Harding
 Copyright (c) 2019 Floris den Hengst
+Copyright (c) 2021 Stephen Harding
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,11 +22,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-
+import os
 import random
 import cmd
 import webbrowser
-from pprint import pprint
 
 import csv
 import math
@@ -40,6 +39,7 @@ gridsize = 5
 stepping = 16
 save_path = './cards.html'
 input_file = './mingo_input1.csv'
+current_dir = os.getcwd()
 
 class Spotify():
     def __init__(self):
@@ -53,6 +53,7 @@ class Spotify():
 class Playlist():
     def __init__(self, sp):
         self.sp = sp
+        self.track_set = set(())
 
     def get_playlists(self):
         results = self.sp.current_user_playlists(limit=50)
@@ -60,6 +61,15 @@ class Playlist():
         for i, item in enumerate(results['items']):
             lists[str(i)] = [item['name'], item['id']]
         return lists
+
+    def duplicate_detect(self, track_name):
+        is_duplicate = False
+        if track_name in self.track_set:
+            is_duplicate = True
+        else:
+            self.track_set.add(track_name)
+        return is_duplicate
+
 
     def playlist_processing(self, pl_id, m_writer=None):
         offset = 0
@@ -75,16 +85,18 @@ class Playlist():
             for idx in range(0, len(response['items'])):
                 track = response['items'][idx]['track']
                 artist_name = response['items'][idx]['track']['artists'][0]['name']
-                # track_id = track['id']
-                # track_urn = f'spotify:track:{track_id}'
-                # track_info = sp.track(track_urn)
-                # artist_name = track_info['album']['artists'][0]['name']
-                print(track['name'], track['id'], artist_name)
-                if m_writer:
-                    m_writer.writerow([idx+offset, idx+offset, track['name'], track['id'], artist_name])
-            
+                if not self.duplicate_detect(track['name']):
+                    # track_id = track['id']
+                    # track_urn = f'spotify:track:{track_id}'
+                    # track_info = sp.track(track_urn)
+                    # artist_name = track_info['album']['artists'][0]['name']
+                    # print(track['name'], track['id'], artist_name)
+                    if m_writer:
+                        m_writer.writerow([idx+offset, idx+offset, track['name'], track['id'], artist_name])
+                else:
+                    print(f"The track named {track['name']} by {artist_name} was not used because its name is very similar to another track already used.")
             offset = offset + len(response['items'])
-            print(f'Wrote {offset} records so far...')
+            print(f'Processed {offset} records so far...')
         print(f'Total number of records processed: {offset}')
 
 
@@ -103,26 +115,37 @@ class Playlist():
 
 class Player():
     def __init__(self, track_ids, sp):
-        self.macbook_player = '9f2e02f26803b9fa62a12fc3c6ffe904c8115005'
-        self.echo_show_player = 'f40ca59011ba5f2e7c9f45e350d218ca9a517cda'
+        self.active_player = None
         self.track_ids = track_ids
         self.sp = sp
 
-    def show_available_players(self):
+    def show_available_players(self, list_all_players=True):
         res = self.sp.devices()
-        pprint(res)
+        player_count = len(res['devices'])
+        print(f'Your account is associated with {player_count} players.')
+        for idx in range(player_count):
+            if list_all_players:
+                player_data = f"{res['devices'][idx]['name']},{res['devices'][idx]['type']}"
+                active_msg = 'Inactive'
+                if res['devices'][idx]['is_active']:
+                    active_msg = 'Active'
+                print(f'{idx}: {player_data}, {active_msg}')
+            if res['devices'][idx]['is_active'] and self.active_player is None:
+                self.active_player = res['devices'][idx]['id']
+                print(f'Selected active music player: ', {res['devices'][idx]['name']})
 
     def play_track(self, track_index):
         try:
+            print(f'Playing track on music player id: {self.active_player}')
             self.sp.start_playback(uris=[f'spotify:track:{self.track_ids[track_index]}'], 
-                            device_id=self.macbook_player)
+                            device_id=self.active_player)
         except Exception as error:
             print('Make sure the device you intend to play the track on is available and try again.')
 
     def resume_track(self, track_index, position_ms):
         try:
             self.sp.start_playback(uris=[f'spotify:track:{self.track_ids[track_index]}'], 
-                            device_id=self.macbook_player, 
+                            device_id=self.active_player, 
                             position_ms=position_ms)
         except Exception as error:
             print('Make sure the device you intend to play the track on is available and try again.')
@@ -142,12 +165,12 @@ class Card():
         self.sheet = sheet
         self.playlist_name = playlist_name
 
-        # The sheet has rows, columns, diagonals, and corners. Game progress will
+        # @TODO The sheet has rows, columns, diagonals, and corners. Game progress will
         # be recorded as tracks are played by marking tracks in these places.
-        self.rows = dict()
-        self.cols = dict()
-        self.diags = dict()
-        self.corners = dict()
+        #self.rows = dict()
+        #self.cols = dict()
+        #self.diags = dict()
+        #self.corners = dict()
 
     def as_html(self, f=stdout, readable=True):
         if readable:
@@ -165,19 +188,26 @@ class Card():
             for c in range(gridsize):
                 cell = r * gridsize + c
                 cell = self.sheet[cell]
-                columnstring = '<td>' + cell + "</td>" + newline
+                # Check length of cell string. apply a smaller fontsize if it's
+                # too long, this tries to keep a card short enough to fit on a page
+                # without running to the top of the next page.
+                if len(cell) > 25:
+                    font_size = 'class="long-text-cell"'
+                else:
+                    font_size = ""
+                columnstring = f'<td {font_size}>' + cell + "</td>" + newline
                 f.write(columnstring)
             f.write("</tr>\n")
         f.write("</table>"+newline)
 
     def view_html(self):
-        filename = 'file:///Users/stephenharding/mycode/Python/spotify_3.9/mingo/cards.html'
+        filename = 'file://'+current_dir+'/cards.html'
         webbrowser.open_new_tab(filename)
 
 
 class CardFactory():
     def __init__(self, input_file) -> None:
-        self.center_figure = '<img src="https://raw.githubusercontent.com/florisdenhengst/music-bingo/master/center-img-small.png"/>'
+        self.center_figure = '<img src="center-img-small.png"/>'
         self.input_titles = []
         self.input_ids = []
         self.input_track_ids = []
@@ -189,7 +219,14 @@ class CardFactory():
             for row in r:
                 self.input_artists.append(row[4])
                 self.input_track_ids.append(row[3])
-                self.input_titles.append(row[2])
+                # Shorten title by removing stuff after a hyphen that is preceded by
+                # a space. Spotify titles often include meta-info like when a song
+                # was remastered, and we don't want this on the gamecard. They seem
+                # to always delimit the meta-info with a space-hyphen-space pattern. Some
+                # song titles include hyphens, but they typically are not preceded
+                # with a space.
+                short_title = row[2].split(' - ', 1)[0]
+                self.input_titles.append(short_title)
                 self.input_ids.append(row[1])
 
         self.n_titles = len(self.input_titles)
@@ -202,7 +239,7 @@ class CardFactory():
             self.track_info[i] = f'{w}'
 
     def make_card(self):
-        print('Creating mingo card from: ' + str(len(self.titles)) + ' song titles')
+        # print('Creating mingo card from: ' + str(len(self.titles)) + ' song titles')
         sheet = random.sample(self.titles, gridsize**2 - 1)
         sheet.insert(math.ceil(len(sheet)/2), self.center_figure) 
         return Card(sheet, self.playlist_name)
@@ -233,8 +270,9 @@ class Game():
         print(f'Created a Mingo game with {n_cards} cards')
 
     def get_card(self, card_num):
-        if card_num > self.n_cards-1:
-            raise Exception(f'There are only {self.n_cards} cards in this game. Try again.')
+        if card_num > self.n_cards-1 or card_num < 0:
+            raise Exception(f'There are {self.n_cards} cards in this game, \
+numbered 0 through {self.n_cards - 1}. Try again.')
         else:
             return self.cards[card_num] 
     
@@ -249,6 +287,10 @@ class Game():
             print('No tracks have been played yet')
 
     def play_track(self):
+        if len(self.unplayed_tracks) == 0:
+            print('The game is over. All tracks have been played.')
+            return
+
         track_idx = random.choice(self.unplayed_tracks)
         self.unplayed_tracks.remove(track_idx)
         self.played_tracks.append(track_idx)
@@ -256,7 +298,6 @@ class Game():
         now_playing = self.track_info[track_idx]
         artist = self.track_artists[track_idx]
         self.current_track_idx = track_idx
-
         print(f'Now playing: "{now_playing}" by "{artist}"')
         self.player.play_track(track_idx)
 
@@ -288,93 +329,116 @@ class Game():
             returns:
                 None
         '''
-        with open(save_path, 'w') as f:
-            f.write("<html>")
+        try:
+            with open(save_path, 'w') as f:
+                f.write("<html>")
 
-            # First write a css that provides a good table rendering for mingo cards.
-            # This also will cause two cards per page when printing the browser
-            # display of the cards.
-            f.write("""
-            <head>
-                <style>
-                    td {
-                width: 120px;
-                height: 50px;
-                padding: 2px;
-                        overflow: hidden;
-                text-align: center;
-                vertical-align: middle;
-                border: 1px solid black;
-                        font-size: 19pt;
-                        font-family: Arial, Helvetica, sans-serif;
-                    }
-                    img {
-                        max-height: 50px;
-                    }
-                    br.space{
-                        margin-top: 70px;
-                    }
-                    @media print{
-                        br.page{
-                            page-break-before: always;
+                # First write a css that provides a good table rendering for mingo cards.
+                # This also will cause one card per page when printing the browser
+                # display of the cards.
+                f.write("""
+                <head>
+                    <style>
+                        td {
+                            width: 120px;
+                            height: 50px;
+                            padding: 2px;
+                            overflow: hidden;
+                            text-align: center;
+                            vertical-align: middle;
+                            border: 1px solid black;
+                            font-size: 18pt;
+                            font-family: Arial, Helvetica, sans-serif;
                         }
-                    }
-                </style>
-            </head>
-            <body>
-            """)
-            if not card_num:
-                for i in range(self.n_cards):
-                    card = self.get_card(i)
-                    f.write(f"<h3>{card.playlist_name}, Card number {i}  </h3>")
+                        .long-text-cell{
+                            font-size: 15pt;
+                        }
+                        img {
+                            max-height: 50px;
+                        }
+                        br.space{
+                            margin-top: 70px;
+                        }
+                        @media print{
+                            br.page{
+                                page-break-before: always;
+                            }
+                        }
+                    </style>
+                </head>
+                <body>
+                """)
+                if not card_num:
+                    for i in range(self.n_cards):
+                        # Following prints one card per page. The css 'page' provides
+                        # a page-break when printed. But this only actually works
+                        # with Firefox, according to my testing. So use Firefox with
+                        # this program.
+                        card = self.get_card(i)
+                        f.write(f"<h3>{card.playlist_name}, Card number {i}  </h3>")
+                        card.as_html(f, False)
+                        f.write("<br class='page'/>")
+                        """
+                        # Following prints two cards per page. This needs a very small
+                        # font that old people like me cannot see well.
+                        if (i+1) % 2 == 0:
+                            f.write("<br class='page'/>")
+                        else:
+                            f.write("<br class='space'/>")
+                        """
+                else:
+                    card = self.get_card(int(card_num))
+                    f.write(f"<h3>{card.playlist_name}, Card number {card_num} </h3>")
                     card.as_html(f, False)
                     f.write("<br class='page'/>")
-                    """
-                    if (i+1) % 2 == 0:
-                        f.write("<br class='page'/>")
-                    else:
-                        f.write("<br class='space'/>")
-                    """
-            else:
-                card = self.get_card(int(card_num))
-                f.write(f"<h3>{card.playlist_name}, Card number {card_num} </h3>")
-                card.as_html(f, False)
-                f.write("<br class='page'/>")
-            f.write("\n")
 
-        filename = 'file:///Users/stephenharding/mycode/Python/spotify_3.9/mingo/cards.html'
-        browser = webbrowser.get('firefox')
-        browser.open(filename)
-        # The call below was originally used. It opened the cards in the default browser,
-        # which is Chrome on my machine. But Chrome has problems with the css print definition
-        # for br.page that is used to insert a page break when printing. Firefox works, so
-        # I needed to specify non-default browser firefox as seen above...
-        #webbrowser.open_new_tab(filename)
+                f.write("\n")
+
+            filename = 'file://'+current_dir+'/cards.html'
+            browser = webbrowser.get('firefox')
+            browser.open(filename)
+            # The call below was originally used. It opened the cards in the default browser,
+            # which is Chrome on my machine. 
+            # But Chrome has problems with the css print definition
+            # for br.page that is used to insert a page break when printing. Firefox works, so
+            # I needed to specify non-default browser firefox as seen above...
+            # @TODO Remove Firefox and test to see what happens.
+            #webbrowser.open_new_tab(filename)
+        except Exception as error:
+            # @TODO Untested below. I think if I remove Firefox I will get an exception.
+            # The line of code below will use the default browser in the absence of Firefox,
+            # I think. I should check the specific exception and only display the default
+            # browser when Firefox is not available. Then I should inform the user that
+            # Firefox should be made available.
+            webbrowser.open_new_tab(filename)
+            print(error)
 
 
 class CommandProcessor(cmd.Cmd):
-    prompt = '(no active game)'
+    prompt = '(No active game)'
     def __init__(self):
         super(CommandProcessor, self).__init__()
         self.active_game = None
         spotify = Spotify()
         self.sp = spotify.sp
         self.pl = Playlist(spotify.sp)
+        self.do_playlists()
 
 
     """Process commands related to Spotify playlist management for the game of MINGO """
-    def do_playlists(self, sub_command):
+    def do_playlists(self, sub_command=None):
         """Display all Spotify playlists for the authorized Spotify user."""
         playlists = self.pl.get_playlists()
+        print('\nThese are your playlists:')
         for k in playlists.keys():
             print(f'{k}: {playlists[f"{k}"][0]}')
-        print('\nNext you can save a list using the "savelist" command.\nAfter saving a list, you can make a set of Mingo cards with the listed songs.')
+        print('\nSave a list using the "savelist" command followed by a list number.\nAfter saving a list, you can make a set of Mingo cards with the listed songs.')
 
     def do_savelist(self, list_number):
         """Save the names and ids of tracks from a Spotify playlist to a csv file. The number of the playlist must be supplied."""
         if list_number:
             self.pl.process_playlist(list_number, True)
-            print('\nNext you can make a set of Mingo cards using the songs in the list you just saved.')
+            print('\nNow you can make a set of Mingo cards using the songs in the list you just saved.')
             print('Use the "makegame" command to make a set of Mingo cards.')
         else:
             print('You must enter the number of a playlist to save its tracks')
@@ -387,6 +451,7 @@ class CommandProcessor(cmd.Cmd):
             print('You must enter the number of a playlist to show its tracks')
     
     def do_status(self, line):
+        """Show a list of track ids played so far."""
         if self.active_game:
             self.active_game.show_status()
         else:
@@ -406,12 +471,13 @@ class CommandProcessor(cmd.Cmd):
             self.prompt = f'({self.active_game.playlist_name})'
             print(f'A new game has been made with {num_cards} cards.')
             print('\nYou can use the "gamecards" command to display and print the Mingo cards for this game.')
-            print('You can begin playing tracks in random order by using the "playtrack" command for each track.')
+            print('You can begin playing tracks in random order by using the "nexttrack" command for each track.')
         except Exception as error:
             print(error)
 
-    def do_view(self, card_num):
-        """View a single Mingo card from the active Mingo game."""
+    def do_view(self, card_num=None):
+        """Specify a card number to view a single Mingo card from the active Mingo game. 
+        If no number is specified, all cards are displayed."""
         if self.active_game:
             self.active_game.view_in_browser(card_num)
         else:
@@ -439,6 +505,7 @@ class CommandProcessor(cmd.Cmd):
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
     def do_pause(self, _):
+        """Pause the song that is currently playing. Use resume to resume playing."""
         if self.active_game:
             self.active_game.pause()
             resume_at = self.active_game.currently_playing()[0]
@@ -447,18 +514,22 @@ class CommandProcessor(cmd.Cmd):
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
     
     def do_resume(self,_):
+        """If a song has been paused, this command resumes playing the song."""
         if self.active_game:
             self.active_game.resume()
         else:
                print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
-    def do_showplayers(self, _):
+    def do_musicplayers(self, _):
+        """List the music players that Spotify can use to play tracks. The first such player
+        that is marked 'Active' in Spotify is selected to play your songs."""
         if self.active_game:
             self.active_game.player.show_available_players()
         else:
             print('There is not an active game, so players cannot be listed.')
 
     def do_currentlyplaying(self, _):
+        """Show the info for the currently playing track."""
         if self.active_game:
             progress = self.active_game.currently_playing()[0]
             print(f'The track has been playing for {progress} msec')
