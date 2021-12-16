@@ -29,6 +29,7 @@ import webbrowser
 
 import csv
 import math
+import sys
 from sys import stdout
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -413,6 +414,9 @@ numbered 0 through {self.n_cards - 1}. Try again.')
             webbrowser.open_new_tab(filename)
             print(error)
 
+class ExitCmdException(Exception):
+    pass #Could do something but just make a simple exception
+
 
 class CommandProcessor(cmd.Cmd):
     prompt = '(No active game)'
@@ -545,5 +549,24 @@ class CommandProcessor(cmd.Cmd):
             pass
         return True
 
+    def do_quit(self, args):
+        """ Quits the command loop """
+        raise ExitCmdException()
+
+
 if __name__ == '__main__':
-    CommandProcessor().cmdloop()
+    continue_running = True
+    while continue_running:
+        try:
+            CommandProcessor().cmdloop()
+        except Exception as e:
+            exception_name = e.__class__.__name__
+    
+            if exception_name == 'ExitCmdException':
+                continue_running = False
+                print('Exiting the program...')
+            else:
+                choice = input(f'{exception_name}: Try correcting this problem and press "Y" to try again.')
+                if choice.upper() != 'Y':
+                    continue_running = False
+                    print('Exiting the program')
