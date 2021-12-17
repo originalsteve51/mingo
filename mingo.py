@@ -34,14 +34,23 @@ from sys import stdout
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
-# Initial global settings
-numbersheets = 6
+#-----------------------------------
+# A few global settings follow below
+#-----------------------------------
 gridsize = 5
 stepping = 16
 save_path = './cards.html'
 input_file = './mingo_input1.csv'
 current_dir = os.getcwd()
 
+
+
+#-----------------------------------------------------------
+# Spotify is a class that provides access to the Spotify API
+# The spotipy library performs its magic here by using values
+# found in the environment to authenticate the user. Once
+# authenticated, the api can be called.
+#-----------------------------------------------------------
 class Spotify():
     def __init__(self):
         ascope = 'user-read-currently-playing,\
@@ -51,6 +60,9 @@ class Spotify():
         ccm=SpotifyOAuth(scope=ascope, open_browser=True)
         self.sp = spotipy.Spotify(client_credentials_manager=ccm)
 
+#-------------------------------------------------------------------
+# Playlist class
+#-------------------------------------------------------------------
 class Playlist():
     def __init__(self, sp):
         self.sp = sp
@@ -114,6 +126,9 @@ class Playlist():
         else:
             self.playlist_processing(pl_id)
 
+#-------------------------------------------------------------------
+# Player class
+#-------------------------------------------------------------------
 class Player():
     def __init__(self, track_ids, sp):
         self.active_player = None
@@ -140,16 +155,16 @@ class Player():
             print(f'Playing track on music player id: {self.active_player}')
             self.sp.start_playback(uris=[f'spotify:track:{self.track_ids[track_index]}'], 
                             device_id=self.active_player)
-        except Exception as error:
-            print('Make sure the device you intend to play the track on is available and try again.')
+        except Exception as e:
+            display_player_exception(e)
 
     def resume_track(self, track_index, position_ms):
         try:
             self.sp.start_playback(uris=[f'spotify:track:{self.track_ids[track_index]}'], 
                             device_id=self.active_player, 
                             position_ms=position_ms)
-        except Exception as error:
-            print('Make sure the device you intend to play the track on is available and try again.')
+        except Exception as e:
+            display_player_exception(e)
 
     def set_volume(self, volume_pct):
         self.sp.volume(volume_pct)
@@ -158,6 +173,9 @@ class Player():
         self.sp.pause_playback()
 
 
+#-------------------------------------------------------------------
+# Card class
+#-------------------------------------------------------------------
 class Card():
     def __init__(self, sheet, playlist_name):
         # sheet is a 25 element list with 24 track numbers and a url. These
@@ -206,6 +224,9 @@ class Card():
         webbrowser.open_new_tab(filename)
 
 
+#-------------------------------------------------------------------
+# CardFactory class
+#-------------------------------------------------------------------
 class CardFactory():
     def __init__(self, input_file) -> None:
         self.center_figure = '<img src="center-img-small.png"/>'
@@ -249,6 +270,9 @@ class CardFactory():
         return self.track_ids
 
                
+#-------------------------------------------------------------------
+# Game class
+#-------------------------------------------------------------------
 class Game():
     def __init__(self, n_cards, sp):
         self.n_cards = n_cards
@@ -414,10 +438,20 @@ numbered 0 through {self.n_cards - 1}. Try again.')
             webbrowser.open_new_tab(filename)
             print(error)
 
+
+#-------------------------------------------------------------------
+# ExitCmdException class - Just so we have a good name when breaking
+# out of the command loop with an Exception
+#-------------------------------------------------------------------
 class ExitCmdException(Exception):
-    pass #Could do something but just make a simple exception
+    pass 
 
 
+#-------------------------------------------------------------------
+# CommandProcessor class - Define the command language here. This
+# extends the Python Cmd class, which brilliantly handles keyboard
+# input by recognizing commands and dispatching them.
+#-------------------------------------------------------------------
 class CommandProcessor(cmd.Cmd):
     prompt = '(No active game)'
     def __init__(self):
@@ -426,6 +460,8 @@ class CommandProcessor(cmd.Cmd):
         spotify = Spotify()
         self.sp = spotify.sp
         self.pl = Playlist(spotify.sp)
+
+        # Start by displaying the available playlists
         self.do_playlists()
 
 
@@ -540,33 +576,80 @@ class CommandProcessor(cmd.Cmd):
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
-    def do_EOF(self, line):
-        """Press ctrl-d to exit this program"""
-        try:
-            if self.active_game and self.active_game.currently_playing()[1]:
-                self.active_game.pause()
-        except:
-            pass
-        return True
+      
+    #def do_EOF(self, line):
+    #    """Press ctrl-d to exit this program"""
+    #    try:
+    #        if self.active_game and self.active_game.currently_playing()[1]:
+    #            self.active_game.pause()
+    #    except:
+    #        pass
+    #    return True
+
 
     def do_quit(self, args):
-        """ Quits the command loop """
+        """ 
+        Quits the game, stopping the player if it's running and
+        cleaning up as necessary
+        """
+        cleanup_before_exiting(self)
         raise ExitCmdException()
 
+#-----------------------------------------
+# Global function definitions follow below
+#-----------------------------------------
+def display_player_exception(e):
+    exception_name = e.__class__.__name__
+    if exception_name == 'SpotifyException':
+        print(f'\n{exception_name}: \nMake sure the device you intend to play the track on is available and try again.')
+    else:
+        display_general_exception(e)
 
+def display_general_exception(e):
+    exception_name = e.__class__.__name__
+    if exception_name == 'ReadTimeout' or exception_name == 'ConnectionError':
+        print(f'\n{exception_name}:\nAn error occurred that indicates that you are not connected to the internet.')
+    else:
+        print(f'\n{exception_name}:\nAn unexpected error occurred.')
+
+
+def cleanup_before_exiting(command_processor):
+    if command_processor.active_game and command_processor.active_game.currently_playing()[1]:
+        command_processor.active_game.pause()
+
+#-----------------------------------------
+# The main processing is declared below
+#-----------------------------------------
 if __name__ == '__main__':
     continue_running = True
+    cp = None
     while continue_running:
+        # Enter the command loop, handling Exceptions that break it. Some Exceptions
+        # can be handled, like losing the network. We give the user a chance
+        # to correct such errors. If the user believes an Exception
+        # has been corrected, the command loop will restart.
         try:
-            CommandProcessor().cmdloop()
+            if cp is None:
+                cp = CommandProcessor()
+            cp.cmdloop()
+        except KeyboardInterrupt:
+            print('Interrupted by ctrl-C, attempting to clean up first')
+            try:
+                cleanup_before_exiting(cp)
+                sys.exit(0)
+            except SystemExit:
+                os._exit(0)
         except Exception as e:
             exception_name = e.__class__.__name__
     
             if exception_name == 'ExitCmdException':
                 continue_running = False
-                print('Exiting the program...')
+                print('\nExiting the program...')
+                continue
             else:
-                choice = input(f'{exception_name}: Try correcting this problem and press "Y" to try again.')
-                if choice.upper() != 'Y':
-                    continue_running = False
-                    print('Exiting the program')
+                display_general_exception(e)
+            
+            choice = input('Try correcting this problem and press "Y" to try again, or any other key to exit. ')
+            if choice.upper() != 'Y':
+                continue_running = False
+                print('Exiting the program')
