@@ -31,17 +31,22 @@ import csv
 import math
 import sys
 from sys import stdout
+from pathlib import Path
+import pickle
+
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
 #-----------------------------------
 # A few global settings follow below
+# @TODO Get rid of global values
 #-----------------------------------
 gridsize = 5
 stepping = 16
 save_path = './cards.html'
 input_file = './mingo_input1.csv'
 current_dir = os.getcwd()
+game_state_pathname = './game_state.bin'
 
 
 
@@ -277,6 +282,8 @@ class Game():
     def __init__(self, n_cards, sp):
         self.n_cards = n_cards
         self.sp = sp
+        # self.make_cards()
+
         card_factory = CardFactory(input_file)
         self.playlist_name = card_factory.playlist_name
         self.cards = dict()
@@ -286,13 +293,32 @@ class Game():
         self.track_info = card_factory.track_info
         self.track_artists = card_factory.input_artists
         self.player = Player(self.track_ids, sp)
+
+        # The state of a game is determined by played_tracks and unplayed_tracks
+        # To restore a suspended game, these lists are populated from a file named
+        # game_state.bin. This file is updated every time a track is played. 
+        # Also, game_state.bin is re-initialized with empty played_tracks
+        # and a full unplayed_tracks every time a makegame command is
+        # issued to make a new game. 
         self.played_tracks = []
         self.unplayed_tracks = []
+        self.state = []
+        
         self.paused_at_ms = None
         self.current_track_idx = None
         for idx in range(len(self.track_ids)):
             self.unplayed_tracks.append(idx)
         print(f'Created a Mingo game with {n_cards} cards')
+
+    def make_cards(self):
+        pass
+
+
+    def write_game_state(self):
+        path = Path(game_state_pathname)
+        with open(path, 'wb') as fp:
+            pickle.dump(self, fp)
+
 
     def get_card(self, card_num):
         if card_num > self.n_cards-1 or card_num < 0:
@@ -508,12 +534,25 @@ class CommandProcessor(cmd.Cmd):
 
         try:
             self.active_game = Game(int(num_cards), self.sp)
+            self.active_game.write_game_state()
             self.prompt = f'({self.active_game.playlist_name})'
             print(f'A new game has been made with {num_cards} cards.')
             print('\nYou can use the "gamecards" command to display and print the Mingo cards for this game.')
             print('You can begin playing tracks in random order by using the "nexttrack" command for each track.')
         except Exception as error:
             print(error)
+
+    def do_continuegame(self, _):
+        """If you stopped playing a game and exited this program, its state is
+        saved. Use this command to resume playing a stopped game from when you stopped it.
+        """
+        
+        try:
+            self.active_game = restore_game_state()
+            self.prompt = f'({self.active_game.playlist_name})'
+
+        except Exception as error:
+            print(error)    
 
     def do_view(self, card_num=None):
         """Specify a card number to view a single Mingo card from the active Mingo game. 
@@ -541,6 +580,7 @@ class CommandProcessor(cmd.Cmd):
         """Play a randomly selected track from the active Mingo game."""
         if self.active_game:
             self.active_game.play_track()
+            self.active_game.write_game_state()
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
@@ -569,14 +609,15 @@ class CommandProcessor(cmd.Cmd):
             print('There is not an active game, so players cannot be listed.')
 
     def do_currentlyplaying(self, _):
-        """Show the info for the currently playing track."""
+        """Shows the progress info for the currently playing track."""
         if self.active_game:
             progress = self.active_game.currently_playing()[0]
             print(f'The track has been playing for {progress} msec')
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
-      
+    # I removed the exit via ctrl-d in favor of the quit command or ctrl-c. These are 
+    # both handled in a way that they are sort of quiet.  
     #def do_EOF(self, line):
     #    """Press ctrl-d to exit this program"""
     #    try:
@@ -612,10 +653,15 @@ def display_general_exception(e):
     else:
         print(f'\n{exception_name}:\nAn unexpected error occurred.')
 
-
 def cleanup_before_exiting(command_processor):
     if command_processor.active_game and command_processor.active_game.currently_playing()[1]:
         command_processor.active_game.pause()
+
+def restore_game_state():
+    path = Path(game_state_pathname)
+    with open (path, 'rb') as fp:
+        restored_game = pickle.load(fp)
+    return restored_game
 
 #-----------------------------------------
 # The main processing is declared below
