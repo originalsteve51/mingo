@@ -135,9 +135,9 @@ class Playlist():
 # Player class
 #-------------------------------------------------------------------
 class Player():
-    def __init__(self, track_ids, sp):
+    def __init__(self, sp):
         self.active_player = None
-        self.track_ids = track_ids
+        # self.track_ids = track_ids
         self.sp = sp
 
     def show_available_players(self, list_all_players=True):
@@ -151,21 +151,21 @@ class Player():
                 if res['devices'][idx]['is_active']:
                     active_msg = 'Active'
                 print(f'{idx}: {player_data}, {active_msg}')
-            if res['devices'][idx]['is_active'] and self.active_player is None:
+            if res['devices'][idx]['is_active']: # and self.active_player is None:
                 self.active_player = res['devices'][idx]['id']
                 print(f'Selected active music player: ', {res['devices'][idx]['name']})
 
-    def play_track(self, track_index):
+    def play_track(self, track_id):
         try:
-            print(f'Playing track on music player id: {self.active_player}')
-            self.sp.start_playback(uris=[f'spotify:track:{self.track_ids[track_index]}'], 
+            # print(f'Playing track {track_id} on music player id: {self.active_player}')
+            self.sp.start_playback(uris=[f'spotify:track:{track_id}'], 
                             device_id=self.active_player)
         except Exception as e:
             display_player_exception(e)
 
-    def resume_track(self, track_index, position_ms):
+    def resume_track(self, track_id, position_ms):
         try:
-            self.sp.start_playback(uris=[f'spotify:track:{self.track_ids[track_index]}'], 
+            self.sp.start_playback(uris=[f'spotify:track:{track_id}'], 
                             device_id=self.active_player, 
                             position_ms=position_ms)
         except Exception as e:
@@ -292,7 +292,7 @@ class Game():
         self.track_ids = card_factory.get_track_ids()
         self.track_info = card_factory.track_info
         self.track_artists = card_factory.input_artists
-        self.player = Player(self.track_ids, sp)
+        self.player = Player(sp)
 
         # The state of a game is determined by played_tracks and unplayed_tracks
         # To restore a suspended game, these lists are populated from a file named
@@ -337,7 +337,7 @@ numbered 0 through {self.n_cards - 1}. Try again.')
         else:
             print('No tracks have been played yet')
 
-    def play_track(self):
+    def play_next_track(self):
         if len(self.unplayed_tracks) == 0:
             print('The game is over. All tracks have been played.')
             return
@@ -350,7 +350,8 @@ numbered 0 through {self.n_cards - 1}. Try again.')
         artist = self.track_artists[track_idx]
         self.current_track_idx = track_idx
         print(f'Now playing: "{now_playing}" by "{artist}"')
-        self.player.play_track(track_idx)
+        track_to_play = self.track_ids[track_idx]
+        self.player.play_track(track_to_play)
 
     def pause(self):
         self.player.pause_playback()
@@ -358,7 +359,8 @@ numbered 0 through {self.n_cards - 1}. Try again.')
 
     def resume(self):
         if self.paused_at_ms:
-            self.player.resume_track(self.current_track_idx, self.paused_at_ms)
+            track_to_resume = self.track_ids[self.current_track_idx]
+            self.player.resume_track(track_to_resume, self.paused_at_ms)
             self.paused_at_ms = None
         else:
             print('Nothing was paused, so cannot resume!')
@@ -534,6 +536,9 @@ class CommandProcessor(cmd.Cmd):
 
         try:
             self.active_game = Game(int(num_cards), self.sp)
+
+            # Save the game state before any songs are played. Then if the
+            # user quits immediately, the unplayed game can be continued.
             self.active_game.write_game_state()
             self.prompt = f'({self.active_game.playlist_name})'
             print(f'A new game has been made with {num_cards} cards.')
@@ -546,8 +551,9 @@ class CommandProcessor(cmd.Cmd):
         """If you stopped playing a game and exited this program, its state is
         saved. Use this command to resume playing a stopped game from when you stopped it.
         """
-        
+
         try:
+            print('The previous game state has been restored. You can continue playing it now.')
             self.active_game = restore_game_state()
             self.prompt = f'({self.active_game.playlist_name})'
 
@@ -579,7 +585,7 @@ class CommandProcessor(cmd.Cmd):
     def do_nexttrack(self, _):
         """Play a randomly selected track from the active Mingo game."""
         if self.active_game:
-            self.active_game.play_track()
+            self.active_game.play_next_track()
             self.active_game.write_game_state()
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
@@ -589,6 +595,7 @@ class CommandProcessor(cmd.Cmd):
         if self.active_game:
             self.active_game.pause()
             resume_at = self.active_game.currently_playing()[0]
+            self.active_game.write_game_state()
             print(f'Paused after {resume_at} msec')
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
@@ -630,8 +637,9 @@ class CommandProcessor(cmd.Cmd):
 
     def do_quit(self, args):
         """ 
-        Quits the game, stopping the player if it's running and
-        cleaning up as necessary
+        Quits the game, stopping the music player if it's playing and
+        cleaning up as necessary. The state of a game in progress is saved
+        so you can use continuegame to resume a game if you want.
         """
         cleanup_before_exiting(self)
         raise ExitCmdException()
