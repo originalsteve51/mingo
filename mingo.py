@@ -137,7 +137,6 @@ class Playlist():
 class Player():
     def __init__(self, sp):
         self.active_player = None
-        # self.track_ids = track_ids
         self.sp = sp
 
     def show_available_players(self, list_all_players=True):
@@ -279,7 +278,7 @@ class CardFactory():
 # Game class
 #-------------------------------------------------------------------
 class Game():
-    def __init__(self, n_cards, sp):
+    def __init__(self, n_cards, sp, musicplayer):
         self.n_cards = n_cards
         self.sp = sp
         # self.make_cards()
@@ -292,7 +291,7 @@ class Game():
         self.track_ids = card_factory.get_track_ids()
         self.track_info = card_factory.track_info
         self.track_artists = card_factory.input_artists
-        self.player = Player(sp)
+        self.player = musicplayer
 
         # The state of a game is determined by played_tracks and unplayed_tracks
         # To restore a suspended game, these lists are populated from a file named
@@ -368,8 +367,11 @@ numbered 0 through {self.n_cards - 1}. Try again.')
 
     def currently_playing(self):
         track = self.sp.current_user_playing_track()
-        is_playing = track['is_playing']
-        progress = track['progress_ms']
+        is_playing = False
+        progress = 0
+        if track:
+            is_playing = track['is_playing']
+            progress = track['progress_ms']
         return progress, is_playing
 
     def view_in_browser(self, card_num=None):
@@ -488,6 +490,7 @@ class CommandProcessor(cmd.Cmd):
         spotify = Spotify()
         self.sp = spotify.sp
         self.pl = Playlist(spotify.sp)
+        self.player = Player(spotify.sp)
 
         # Start by displaying the available playlists
         self.do_playlists()
@@ -500,16 +503,8 @@ class CommandProcessor(cmd.Cmd):
         print('\nThese are your playlists:')
         for k in playlists.keys():
             print(f'{k}: {playlists[f"{k}"][0]}')
-        print('\nSave a list using the "savelist" command followed by a list number.\nAfter saving a list, you can make a set of Mingo cards with the listed songs.')
-
-    def do_savelist(self, list_number):
-        """Save the names and ids of tracks from a Spotify playlist to a csv file. The number of the playlist must be supplied."""
-        if list_number:
-            self.pl.process_playlist(list_number, True)
-            print('\nNow you can make a set of Mingo cards using the songs in the list you just saved.')
-            print('Use the "makegame" command to make a set of Mingo cards.')
-        else:
-            print('You must enter the number of a playlist to save its tracks')
+        print('\nIssue the ''makegame'' command followed by a playlist number to start a new game, \
+or issue the ''continuegame'' command to restart an old game.')
     
     def do_showlist(self, list_number):
         """Show the names of tracks in a Spotify playlist."""
@@ -529,13 +524,25 @@ class CommandProcessor(cmd.Cmd):
         """Show the name of the signed-on Spotify user whose playlists are to be used to generate Mingo games."""
         print(self.pl.sp.me()['display_name'])
 
-    def do_makegame(self, num_cards):
+    def do_makegame(self, options):
         """Use the currently active playlist to generate a specified number of Mingo cards."""
-        if not num_cards:
-            num_cards = '10'
+        num_cards = 10
+        playlist_num = -1
+        if not options:
+            print('You did not enter a playlist number to use for this game. Try again.')
+            return
+        else:
+            arg_list = options.split(' ')
+            if len(arg_list) == 1:
+                playlist_num = int(arg_list[0])
+            elif len(arg_list) == 2:
+                playlist_num = int(arg_list[0])
+                num_cards = int(arg_list[1])
+            
+            self.pl.process_playlist(playlist_num, True)
 
         try:
-            self.active_game = Game(int(num_cards), self.sp)
+            self.active_game = Game(num_cards, self.sp, self.player)
 
             # Save the game state before any songs are played. Then if the
             # user quits immediately, the unplayed game can be continued.
@@ -548,8 +555,8 @@ class CommandProcessor(cmd.Cmd):
             print(error)
 
     def do_continuegame(self, _):
-        """If you stopped playing a game and exited this program, its state is
-        saved. Use this command to resume playing a stopped game from when you stopped it.
+        """If you stopped playing a game and exited this program, its state is \
+saved. Use this command to resume playing a stopped game from when you stopped it.
         """
 
         try:
@@ -561,8 +568,8 @@ class CommandProcessor(cmd.Cmd):
             print(error)    
 
     def do_view(self, card_num=None):
-        """Specify a card number to view a single Mingo card from the active Mingo game. 
-        If no number is specified, all cards are displayed."""
+        """Specify a card number to view a single Mingo card from the active Mingo game. \ 
+If no number is specified, all cards are displayed."""
         if self.active_game:
             self.active_game.view_in_browser(card_num)
         else:
@@ -610,10 +617,10 @@ class CommandProcessor(cmd.Cmd):
     def do_musicplayers(self, _):
         """List the music players that Spotify can use to play tracks. The first such player
         that is marked 'Active' in Spotify is selected to play your songs."""
-        if self.active_game:
-            self.active_game.player.show_available_players()
+        if self.player:
+            self.player.show_available_players()
         else:
-            print('There is not an active game, so players cannot be listed.')
+            print('No players can be listed.')
 
     def do_currentlyplaying(self, _):
         """Shows the progress info for the currently playing track."""
@@ -623,21 +630,9 @@ class CommandProcessor(cmd.Cmd):
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
-    # I removed the exit via ctrl-d in favor of the quit command or ctrl-c. These are 
-    # both handled in a way that they are sort of quiet.  
-    #def do_EOF(self, line):
-    #    """Press ctrl-d to exit this program"""
-    #    try:
-    #        if self.active_game and self.active_game.currently_playing()[1]:
-    #            self.active_game.pause()
-    #    except:
-    #        pass
-    #    return True
-
-
     def do_quit(self, args):
         """ 
-        Quits the game, stopping the music player if it's playing and
+        Quit the game, stopping the music player if it's playing and
         cleaning up as necessary. The state of a game in progress is saved
         so you can use continuegame to resume a game if you want.
         """
