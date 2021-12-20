@@ -65,6 +65,8 @@ class Spotify():
         ccm=SpotifyOAuth(scope=ascope, open_browser=True)
         self.sp = spotipy.Spotify(client_credentials_manager=ccm)
 
+        # print(dir(self.sp))
+
 #-------------------------------------------------------------------
 # Playlist class
 #-------------------------------------------------------------------
@@ -88,6 +90,8 @@ class Playlist():
             self.track_set.add(track_name)
         return is_duplicate
 
+    def duplicate_detect_reset(self):
+        self.track_set.clear()
 
     def playlist_processing(self, pl_id, m_writer=None):
         offset = 0
@@ -99,6 +103,10 @@ class Playlist():
 
             if len(response['items']) == 0:
                 break
+
+            # Clear out duplicate detect before using it, otherwise
+            # it holds previous usage data
+            self.duplicate_detect_reset()
 
             for idx in range(0, len(response['items'])):
                 track = response['items'][idx]['track']
@@ -113,7 +121,8 @@ class Playlist():
                         m_writer.writerow([idx+offset, idx+offset, track['name'], track['id'], artist_name])
                 else:
                     print(f"The track named {track['name']} by {artist_name} was not used because its name is very similar to another track already used.")
-            offset = offset + len(response['items'])
+            offset = offset + len(response['items']) 
+
             print(f'Processed {offset} records so far...')
         print(f'Total number of records processed: {offset}')
 
@@ -156,7 +165,10 @@ class Player():
 
     def play_track(self, track_id):
         try:
-            # print(f'Playing track {track_id} on music player id: {self.active_player}')
+            # Set the repeat mode to off, otherwise the track will repeat
+            # and this is not what I think we want. Tracks should just
+            # play once for MINGO
+            self.sp.repeat(state='off', device_id=self.active_player)
             self.sp.start_playback(uris=[f'spotify:track:{track_id}'], 
                             device_id=self.active_player)
         except Exception as e:
@@ -181,19 +193,14 @@ class Player():
 # Card class
 #-------------------------------------------------------------------
 class Card():
-    def __init__(self, sheet, playlist_name):
+    def __init__(self, sheet, playlist_name, game_monitor):
         # sheet is a 25 element list with 24 track numbers and a url. These
         # represent 5 x 5 element rows of the Mingo board. The center element
         # is the url, which represents a free square.
         self.sheet = sheet
         self.playlist_name = playlist_name
+        self.monitor = game_monitor
 
-        # @TODO The sheet has rows, columns, diagonals, and corners. Game progress will
-        # be recorded as tracks are played by marking tracks in these places.
-        #self.rows = dict()
-        #self.cols = dict()
-        #self.diags = dict()
-        #self.corners = dict()
 
     def as_html(self, f=stdout, readable=True):
         if readable:
@@ -211,15 +218,26 @@ class Card():
             for c in range(gridsize):
                 cell = r * gridsize + c
                 cell = self.sheet[cell]
+                been_played = self.monitor.has_been_played(cell)
                 # Check length of cell string. apply a smaller fontsize if it's
                 # too long, this tries to keep a card short enough to fit on a page
                 # without running to the top of the next page.
-                if len(cell) > 25:
-                    font_size = 'class="long-text-cell"'
-                else:
-                    font_size = ""
-                columnstring = f'<td {font_size}>' + cell + "</td>" + newline
-                f.write(columnstring)
+                cell_class = ''
+                if cell.startswith('<img'):
+                    # Center cell is an image, always selected
+                    cell_class = 'class="selected"'
+                elif len(cell) > 25:
+                    if been_played:
+                        cell_class = 'class="long-text-cell-selected"'
+                    else:
+                        cell_class = 'class="long-text-cell"'
+                elif been_played:
+                    cell_class = 'class="selected"'
+
+
+                cell_string = f'<td {cell_class}>' + cell + "</td>" + newline
+
+                f.write(cell_string)
             f.write("</tr>\n")
         f.write("</table>"+newline)
 
@@ -232,12 +250,14 @@ class Card():
 # CardFactory class
 #-------------------------------------------------------------------
 class CardFactory():
-    def __init__(self, input_file) -> None:
+    def __init__(self, input_file, game_monitor) -> None:
         self.center_figure = '<img src="center-img-small.png"/>'
         self.input_titles = []
         self.input_ids = []
         self.input_track_ids = []
         self.input_artists = []
+        self.game_monitor = game_monitor
+
         with open(input_file, 'r') as f:
             r = csv.reader(f, delimiter=',', quotechar='"')
             playlist_name_row = next(r)
@@ -247,7 +267,7 @@ class CardFactory():
                 self.input_track_ids.append(row[3])
                 # Shorten title by removing stuff after a hyphen that is preceded by
                 # a space. Spotify titles often include meta-info like when a song
-                # was remastered, and we don't want this on the gamecard. They seem
+                # was remastered, and we don't want this on the game card. They seem
                 # to always delimit the meta-info with a space-hyphen-space pattern. Some
                 # song titles include hyphens, but they typically are not preceded
                 # with a space.
@@ -268,7 +288,7 @@ class CardFactory():
         # print('Creating mingo card from: ' + str(len(self.titles)) + ' song titles')
         sheet = random.sample(self.titles, gridsize**2 - 1)
         sheet.insert(math.ceil(len(sheet)/2), self.center_figure) 
-        return Card(sheet, self.playlist_name)
+        return Card(sheet, self.playlist_name, self.game_monitor)
 
     def get_track_ids(self):
         return self.track_ids
@@ -281,9 +301,9 @@ class Game():
     def __init__(self, n_cards, sp, musicplayer):
         self.n_cards = n_cards
         self.sp = sp
-        # self.make_cards()
+        self.game_monitor = GameMonitor()
 
-        card_factory = CardFactory(input_file)
+        card_factory = CardFactory(input_file, self.game_monitor)
         self.playlist_name = card_factory.playlist_name
         self.cards = dict()
         for _ in range(n_cards):
@@ -293,12 +313,6 @@ class Game():
         self.track_artists = card_factory.input_artists
         self.player = musicplayer
 
-        # The state of a game is determined by played_tracks and unplayed_tracks
-        # To restore a suspended game, these lists are populated from a file named
-        # game_state.bin. This file is updated every time a track is played. 
-        # Also, game_state.bin is re-initialized with empty played_tracks
-        # and a full unplayed_tracks every time a makegame command is
-        # issued to make a new game. 
         self.played_tracks = []
         self.unplayed_tracks = []
         self.state = []
@@ -307,11 +321,10 @@ class Game():
         self.current_track_idx = None
         for idx in range(len(self.track_ids)):
             self.unplayed_tracks.append(idx)
+
+        self.game_monitor.set_total_tracks(len(self.track_ids))
+
         print(f'Created a Mingo game with {n_cards} cards')
-
-    def make_cards(self):
-        pass
-
 
     def write_game_state(self):
         path = Path(game_state_pathname)
@@ -325,16 +338,6 @@ class Game():
 numbered 0 through {self.n_cards - 1}. Try again.')
         else:
             return self.cards[card_num] 
-    
-
-    def show_status(self):
-        if self.played_tracks:
-            unordered_tracks = list(self.played_tracks)
-            self.played_tracks.sort()
-            print(f'Played {self.played_tracks} so far...')
-            self.played_tracks = unordered_tracks
-        else:
-            print('No tracks have been played yet')
 
     def play_next_track(self):
         if len(self.unplayed_tracks) == 0:
@@ -344,11 +347,13 @@ numbered 0 through {self.n_cards - 1}. Try again.')
         track_idx = random.choice(self.unplayed_tracks)
         self.unplayed_tracks.remove(track_idx)
         self.played_tracks.append(track_idx)
-        print(f'Played so far: {self.played_tracks}')
+        
         now_playing = self.track_info[track_idx]
         artist = self.track_artists[track_idx]
         self.current_track_idx = track_idx
-        print(f'Now playing: "{now_playing}" by "{artist}"')
+        self.game_monitor.add_to_played_tracks(now_playing)
+
+        print(f'\nNow playing: "{now_playing}" by "{artist}"\n')
         track_to_play = self.track_ids[track_idx]
         self.player.play_track(track_to_play)
 
@@ -405,8 +410,15 @@ numbered 0 through {self.n_cards - 1}. Try again.')
                             font-size: 18pt;
                             font-family: Arial, Helvetica, sans-serif;
                         }
-                        .long-text-cell{
-                            font-size: 15pt;
+                        .long-text-cell {
+                            font-size: 12pt;
+                        }
+                        .long-text-cell-selected {
+                            font-size: 12pt;
+                            background: lightcoral;
+                        }
+                        .selected {
+                            background: lightcoral;
                         }
                         img {
                             max-height: 50px;
@@ -476,6 +488,40 @@ numbered 0 through {self.n_cards - 1}. Try again.')
 class ExitCmdException(Exception):
     pass 
 
+#-------------------------------------------------------------------
+# GameMonitor class - What's been played so far
+#-------------------------------------------------------------------
+class GameMonitor():
+    def __init__(self):
+        self.played_track_names = list()
+        self.num_total_tracks = 0
+
+    def add_to_played_tracks(self, track_name):
+        self.played_track_names.append(track_name)
+
+    def set_total_tracks(self, num_total_tracks):
+        self.num_total_tracks = num_total_tracks
+
+    def has_been_played(self, track_name):
+        if track_name in self.played_track_names:
+            return True
+        else:
+            return False
+
+    def show_played_tracks(self):
+        num_played = len(self.played_track_names)
+        num_remaining = self.num_total_tracks - num_played
+
+        if len(self.played_track_names) > 0:
+            print('\nList of tracks played so far:')
+            for track_name in self.played_track_names:
+                print(f'\t{track_name}')
+
+            print(f'\n{num_played} tracks have been played, \
+{num_remaining} tracks are left to play.\n')
+            
+        else:
+            print('\nNo tracks have been played yet.\n')
 
 #-------------------------------------------------------------------
 # CommandProcessor class - Define the command language here. This
@@ -513,13 +559,6 @@ or issue the ''continuegame'' command to restart an old game.')
         else:
             print('You must enter the number of a playlist to show its tracks')
     
-    def do_status(self, line):
-        """Show a list of track ids played so far."""
-        if self.active_game:
-            self.active_game.show_status()
-        else:
-            print('There is not an active game, so no status is available')
-
     def do_userinfo(self, line):
         """Show the name of the signed-on Spotify user whose playlists are to be used to generate Mingo games."""
         print(self.pl.sp.me()['display_name'])
@@ -549,7 +588,7 @@ or issue the ''continuegame'' command to restart an old game.')
             self.active_game.write_game_state()
             self.prompt = f'({self.active_game.playlist_name})'
             print(f'A new game has been made with {num_cards} cards.')
-            print('\nYou can use the "gamecards" command to display and print the Mingo cards for this game.')
+            print('\nYou can use the "view" command to display and print the Mingo cards for this game.')
             print('You can begin playing tracks in random order by using the "nexttrack" command for each track.')
         except Exception as error:
             print(error)
@@ -579,13 +618,6 @@ If no number is specified, all cards are displayed."""
         """Display info about the currently active game."""
         if self.active_game:
             print(f'The currently active game has {self.active_game.n_cards} cards.')
-        else:
-           print('There is not an active game. Create one using "'"makegame"'" and try again.')  
-
-    def do_gamecards(self, _):
-        """Open a browser and display all gamecards, ready for printing."""
-        if self.active_game:
-            self.active_game.view_in_browser()
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
@@ -630,6 +662,15 @@ If no number is specified, all cards are displayed."""
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
+    def do_history(self, num_to_show):
+        """ Show the tracks played so far and tell how many tracks remain to be played. """
+        if self.active_game:
+            self.active_game.game_monitor.show_played_tracks()
+        else:
+           print('There is not an active game. Create one using "'"makegame"'" and try again.')  
+
+
+    
     def do_quit(self, args):
         """ 
         Quit the game, stopping the music player if it's playing and
