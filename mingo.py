@@ -55,6 +55,11 @@ game_state_pathname = './game_state.bin'
 # The spotipy library performs its magic here by using values
 # found in the environment to authenticate the user. Once
 # authenticated, the api can be called.
+# This depends on the following environment variable values, which
+# should be set by a shell script.
+# export SPOTIPY_CLIENT_ID=
+# export SPOTIPY_CLIENT_SECRET=
+# export SPOTIPY_REDIRECT_URI="http://127.0.0.1:8080"
 #-----------------------------------------------------------
 class Spotify():
     def __init__(self):
