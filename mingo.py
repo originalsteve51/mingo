@@ -3,6 +3,7 @@ MIT License
 
 Copyright (c) 2019 Floris den Hengst
 Copyright (c) 2021 Stephen Harding
+Copyright (c) 2024 Stephen Harding
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -43,10 +44,10 @@ from spotipy.oauth2 import SpotifyOAuth
 #-----------------------------------
 gridsize = 5
 stepping = 16
-save_path = './cards.html'
-input_file = './mingo_input1.csv'
+save_path = './.cards.html'
+input_file = './.mingo_input.csv'
 current_dir = os.getcwd()
-game_state_pathname = './game_state.bin'
+game_state_pathname = './.game_state.bin'
 
 
 
@@ -138,7 +139,7 @@ class Playlist():
         pl_id = f'spotify:playlist:{playlist[1]}'
 
         if save_to_file:
-            with open('mingo_input1.csv', mode='w') as mingo_file:
+            with open(input_file, mode='w') as mingo_file:
                 m_writer = csv.writer(mingo_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
                 m_writer.writerow([f'{playlist[0]}', 'track name', 'track id'])
                 self.playlist_processing(pl_id, m_writer)
@@ -198,13 +199,21 @@ class Player():
 # Card class
 #-------------------------------------------------------------------
 class Card():
-    def __init__(self, sheet, playlist_name, game_monitor):
+    def __init__(self, sheet, playlist_name, game_monitor, card_title_idxes):
         # sheet is a 25 element list with 24 track numbers and a url. These
         # represent 5 x 5 element rows of the Mingo board. The center element
         # is the url, which represents a free square.
         self.sheet = sheet
         self.playlist_name = playlist_name
         self.monitor = game_monitor
+
+        # @todo When a Card is made, take all the track_ids that are listed on its sheet and
+        # add them to the set unplayed_tracks. This way only the track_ids that are on cards
+        # are played during the game. Originally I played all tracks, not just the ones on cards.
+        # That causes the game to be too long in many cases.
+        # !!! unplayed_tracks will be property of Game, but for now just test it here
+        self.unplayed_tracks = set()
+        print(card_title_idxes)
 
 
     def as_html(self, f=stdout, readable=True):
@@ -247,7 +256,7 @@ class Card():
         f.write("</table>"+newline)
 
     def view_html(self):
-        filename = 'file://'+current_dir+'/cards.html'
+        filename = 'file://'+current_dir+'/.cards.html'
         webbrowser.open_new_tab(filename)
 
 
@@ -262,6 +271,8 @@ class CardFactory():
         self.input_track_ids = []
         self.input_artists = []
         self.game_monitor = game_monitor
+
+        self.active_indexes = set();
 
         with open(input_file, 'r') as f:
             r = csv.reader(f, delimiter=',', quotechar='"')
@@ -281,22 +292,52 @@ class CardFactory():
                 self.input_ids.append(row[1])
 
         self.n_titles = len(self.input_titles)
+
+        ## !!!
+        self.title_idx = []
+        ## !!!
+
         self.titles = []
         self.track_ids = []
         self.track_info = dict()
         for i, w in enumerate(self.input_titles):
+            print("CardFactory: "+str(i)+"...."+w)
+            ## !!!
+            self.title_idx.append(i)
+            ## !!!
             self.titles.append(f'{w}')
             self.track_ids.append(self.input_track_ids[i])
             self.track_info[i] = f'{w}'
 
+
+
     def make_card(self):
         # print('Creating mingo card from: ' + str(len(self.titles)) + ' song titles')
-        sheet = random.sample(self.titles, gridsize**2 - 1)
+
+        ## The random sample below needs to contain unique selections, never any duplicates.
+        ## random.sample is supposed to provide unique selections, so use it...
+        
+        ## !!!
+        card_title_idxes = random.sample(self.title_idx, gridsize**2 - 1)
+
+        ## Add each card's indexes to the set of indexes used when we play
+        self.active_indexes.update(card_title_idxes)
+        
+        sheet = []
+        for idx in card_title_idxes:
+            ## print(str(idx), self.titles[idx])
+            sheet.append(self.titles[idx])
+        ## !!!
+
+        ## sheet = random.sample(self.titles, gridsize**2 - 1)
         sheet.insert(math.ceil(len(sheet)/2), self.center_figure) 
-        return Card(sheet, self.playlist_name, self.game_monitor)
+        return Card(sheet, self.playlist_name, self.game_monitor, card_title_idxes)
 
     def get_track_ids(self):
         return self.track_ids
+
+    def get_active_indexes(self):
+        return self.active_indexes
 
                
 #-------------------------------------------------------------------
@@ -313,21 +354,31 @@ class Game():
         self.cards = dict()
         for _ in range(n_cards):
             self.cards[_] = card_factory.make_card()
+
+        self.active_indexes = card_factory.get_active_indexes(); ## !!!
+        print("Active indexes: " , self.active_indexes)
+        
         self.track_ids = card_factory.get_track_ids()
         self.track_info = card_factory.track_info
         self.track_artists = card_factory.input_artists
         self.player = musicplayer
 
         self.played_tracks = []
-        self.unplayed_tracks = []
+
+        # unplayed_tracks needs to be a list so random.select will work. The active_indexes
+        # is a set of all songs on all cards. Make the list now...
+        self.unplayed_tracks = list(self.active_indexes)
         self.state = []
         
         self.paused_at_ms = None
         self.current_track_idx = None
-        for idx in range(len(self.track_ids)):
-            self.unplayed_tracks.append(idx)
 
-        self.game_monitor.set_total_tracks(len(self.track_ids))
+        # @todo only add the tracks that are on cards to unplayed_tracks
+        ## for idx in range(len(self.track_ids)):
+        ##    self.unplayed_tracks.append(idx)
+
+        # self.game_monitor.set_total_tracks(len(self.track_ids))
+        self.game_monitor.set_total_tracks(len(self.unplayed_tracks))
 
         print(f'Created a Mingo game with {n_cards} cards')
 
@@ -336,6 +387,12 @@ class Game():
         with open(path, 'wb') as fp:
             pickle.dump(self, fp)
 
+    def save_game_state(self, save_number):
+        save_state_pathname = './.saved_game_'+save_number+'.bin'
+        path = Path(save_state_pathname)
+        with open(path, 'wb') as fp:
+            pickle.dump(self, fp)
+        print(f'Saved game to path {save_state_pathname}')
 
     def get_card(self, card_num):
         if card_num > self.n_cards-1 or card_num < 0:
@@ -344,7 +401,24 @@ numbered 0 through {self.n_cards - 1}. Try again.')
         else:
             return self.cards[card_num] 
 
-    def play_next_track(self):
+    def play_previous_track(self, back_index):
+        if back_index:
+            play_index = int(back_index)
+        else:
+            play_index = -1
+
+        track_idx = self.played_tracks[play_index]
+        print("Playing track idx: ",track_idx)
+        now_playing = self.track_info[track_idx]
+        artist = self.track_artists[track_idx]
+        self.current_track_idx = track_idx
+        print(f'\nNow playing: "{now_playing}" by "{artist}"\n')
+        track_to_play = self.track_ids[track_idx]
+        self.player.play_track(track_to_play)
+        
+
+
+    def play_next_track(self, testmode=False):
         if len(self.unplayed_tracks) == 0:
             print('The game is over. All tracks have been played.')
             return
@@ -352,6 +426,7 @@ numbered 0 through {self.n_cards - 1}. Try again.')
         track_idx = random.choice(self.unplayed_tracks)
         self.unplayed_tracks.remove(track_idx)
         self.played_tracks.append(track_idx)
+        print("Playing track idx: ",track_idx)
         
         now_playing = self.track_info[track_idx]
         artist = self.track_artists[track_idx]
@@ -360,7 +435,8 @@ numbered 0 through {self.n_cards - 1}. Try again.')
 
         print(f'\nNow playing: "{now_playing}" by "{artist}"\n')
         track_to_play = self.track_ids[track_idx]
-        self.player.play_track(track_to_play)
+        if not testmode:
+            self.player.play_track(track_to_play)
 
     def pause(self):
         self.player.pause_playback()
@@ -431,11 +507,15 @@ numbered 0 through {self.n_cards - 1}. Try again.')
                         br.space{
                             margin-top: 70px;
                         }
+
+                        
                         @media print{
                             br.page{
                                 page-break-before: always;
                             }
                         }
+                        
+
                     </style>
                 </head>
                 <body>
@@ -466,7 +546,7 @@ numbered 0 through {self.n_cards - 1}. Try again.')
 
                 f.write("\n")
 
-            filename = 'file://'+current_dir+'/cards.html'
+            filename = 'file://'+current_dir+'/.cards.html'
             browser = webbrowser.get('firefox')
             browser.open(filename)
             # The call below was originally used. It opened the cards in the default browser,
@@ -513,17 +593,29 @@ class GameMonitor():
         else:
             return False
 
-    def show_played_tracks(self):
+    def show_played_tracks(self, active_game, replay_track):
         num_played = len(self.played_track_names)
         num_remaining = self.num_total_tracks - num_played
 
         if len(self.played_track_names) > 0:
             print('\nList of tracks played so far:')
-            for track_name in self.played_track_names:
-                print(f'\t{track_name}')
+            for (i, track_name) in enumerate(self.played_track_names, start=1):
+                print(f'{i}\t{track_name}')
 
             print(f'\n{num_played} tracks have been played, \
 {num_remaining} tracks are left to play.\n')
+
+            if replay_track:
+                replay_index = int(replay_track)
+                if replay_index < num_played + 1 and replay_index > 0:
+                    if active_game:
+                    
+                        print (f'Replay index: {replay_index}')
+                        active_game.play_previous_track(replay_index-1)
+                    else:
+                        print('There is not an active game.')
+                else:
+                    print(f'You made an invalid request to replay track {replay_index}.')
             
         else:
             print('\nNo tracks have been played yet.\n')
@@ -604,15 +696,15 @@ saved. Use this command to resume playing a stopped game from when you stopped i
         """
 
         try:
-            print('The previous game state has been restored. You can continue playing it now.')
             self.active_game = restore_game_state()
             self.prompt = f'({self.active_game.playlist_name})'
+            print('The previous game state has been restored. You can continue playing it now.')
 
         except Exception as error:
             print(error)    
 
     def do_view(self, card_num=None):
-        """Specify a card number to view a single Mingo card from the active Mingo game. \ 
+        """Specify a card number to view a single Mingo card from the active Mingo game. \
 If no number is specified, all cards are displayed."""
         if self.active_game:
             self.active_game.view_in_browser(card_num)
@@ -633,6 +725,15 @@ If no number is specified, all cards are displayed."""
             self.active_game.write_game_state()
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
+
+    """
+    def do_backup(self):
+
+        if self.active_game:
+            self.active_game.play_previous_track()
+        else:
+            print('There is not an active game.')
+    """
 
     def do_pause(self, _):
         """Pause the song that is currently playing. Use resume to resume playing."""
@@ -670,7 +771,17 @@ If no number is specified, all cards are displayed."""
     def do_history(self, num_to_show):
         """ Show the tracks played so far and tell how many tracks remain to be played. """
         if self.active_game:
-            self.active_game.game_monitor.show_played_tracks()
+            self.active_game.game_monitor.show_played_tracks(self.active_game, num_to_show)
+        else:
+           print('There is not an active game. Create one using "'"makegame"'" and try again.')  
+
+    def do_testmode(self, autoplay_count):
+        if self.active_game:
+            if not autoplay_count:
+                autoplay_count = '1'
+            for idx in range(0,int(autoplay_count)):
+                self.active_game.play_next_track(True)
+            self.active_game.write_game_state()
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
@@ -684,6 +795,32 @@ If no number is specified, all cards are displayed."""
         """
         cleanup_before_exiting(self)
         raise ExitCmdException()
+
+    def do_save(self, save_number):
+        """
+        Save a game. You must supply a file name suffix (an integer is nice but
+        not required) that will be used when loading this game.
+        """
+        if not save_number:
+            print('Error: You must supply an argument with the save number to use')
+        else:
+            self.active_game.save_game_state(save_number)
+
+    def do_load(self, load_number):
+        """
+        Load a previously saved game. You must supply a file name suffix (an integer is nice but
+        not required) that was used when a game was saved.
+        """
+        if not load_number:
+            print('Error: You must supply an argument with the load number for the game to load')
+        else:
+            try:
+                self.active_game = load_game_state(load_number)
+                self.prompt = f'({self.active_game.playlist_name})'
+                print('A saved game state has been restored. You can continue playing it now.')
+
+            except Exception as error:
+                print(error)    
 
 #-----------------------------------------
 # Global function definitions follow below
@@ -707,7 +844,16 @@ def cleanup_before_exiting(command_processor):
         command_processor.active_game.pause()
 
 def restore_game_state():
+    print(f'\nRestoring from file {game_state_pathname}')
     path = Path(game_state_pathname)
+    with open (path, 'rb') as fp:
+        restored_game = pickle.load(fp)
+    return restored_game
+
+def load_game_state(load_number):
+    saved_game_pathname = './.saved_game_'+load_number+'.bin'
+    print(f'\nRestoring from file {saved_game_pathname}')
+    path = Path(saved_game_pathname)
     with open (path, 'rb') as fp:
         restored_game = pickle.load(fp)
     return restored_game
