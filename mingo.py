@@ -35,6 +35,10 @@ from sys import stdout
 from pathlib import Path
 import pickle
 
+import threading
+import time
+import requests
+
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
@@ -620,6 +624,39 @@ class GameMonitor():
         else:
             print('\nNo tracks have been played yet.\n')
 
+web_controller_url = 'http://svpserver5.ddns.net:8080'
+# web_controller_url = 'http://localhost:8080'
+class WebMonitor():
+    def __init__(self, cmdprocessor, trigger_vote_count):
+        self._running = False
+        self._thread = None
+        self._cmdprocessor = cmdprocessor
+        self._trigger_vote_count = int(trigger_vote_count)
+
+    def start(self):
+        if not self._running:
+            print('trying to start WebMonitor')
+            self._running = True
+            self._thread = threading.Thread(target=self._run)
+            self._thread.start()
+            print('should be started')
+    
+    def stop(self):
+        self._running = False
+        if self._thread is not None:
+            self._thread.join()
+    
+    def _run(self):
+        while self._running:
+            # print('inside running')
+            stop_count = int(requests.get(web_controller_url+'/get_stop_count').content)
+            # print(stop_count)
+            if (stop_count==self._trigger_vote_count):
+                requests.get(web_controller_url+'/clear')
+                self._cmdprocessor.do_nexttrack(self._cmdprocessor)
+            time.sleep(1)
+
+
 #-------------------------------------------------------------------
 # CommandProcessor class - Define the command language here. This
 # extends the Python Cmd class, which brilliantly handles keyboard
@@ -637,6 +674,20 @@ class CommandProcessor(cmd.Cmd):
 
         # Start by displaying the available playlists
         self.do_playlists()
+
+        self.web_monitor = None 
+
+    def do_auto(self, next_trigger_votes):
+            if next_trigger_votes:
+                self.web_monitor = WebMonitor(self, next_trigger_votes)
+                print('Web Monitor is active. Next song triggers when ',next_trigger_votes, ' are received')      
+                self.do_nexttrack(self)
+                self.web_monitor.start()
+                # Use the value of progress > 0 to determine when the nexttrack should
+                # start automatically
+                # progress = self.active_game.currently_playing()[0]
+            else:
+                print('You must enter the number of votes that will cause the next song to play')    
 
 
     """Process commands related to Spotify playlist management for the game of MINGO """
@@ -820,7 +871,8 @@ If no number is specified, all cards are displayed."""
                 print('A saved game state has been restored. You can continue playing it now.')
 
             except Exception as error:
-                print(error)    
+                print(error)
+
 
 #-----------------------------------------
 # Global function definitions follow below
@@ -842,6 +894,8 @@ def display_general_exception(e):
 def cleanup_before_exiting(command_processor):
     if command_processor.active_game and command_processor.active_game.currently_playing()[1]:
         command_processor.active_game.pause()
+    if command_processor.web_monitor:
+        command_processor.web_monitor.stop()
 
 def restore_game_state():
     print(f'\nRestoring from file {game_state_pathname}')
@@ -857,6 +911,9 @@ def load_game_state(load_number):
     with open (path, 'rb') as fp:
         restored_game = pickle.load(fp)
     return restored_game
+
+
+
 
 #-----------------------------------------
 # The main processing is declared below
