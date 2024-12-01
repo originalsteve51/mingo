@@ -2,8 +2,7 @@
 MIT License
 
 Copyright (c) 2019 Floris den Hengst
-Copyright (c) 2021 Stephen Harding
-Copyright (c) 2024 Stephen Harding
+Copyright (c) 2021, 2024 Stephen Harding
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -34,6 +33,13 @@ import sys
 from sys import stdout
 from pathlib import Path
 import pickle
+
+import threading
+import time
+import requests
+
+import qrcode
+import json
 
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -215,7 +221,9 @@ class Card():
         self.unplayed_tracks = set()
         print(card_title_idxes)
 
-
+    def as_json(self, card_nbr):
+        return songs_to_json(self.sheet, card_nbr)
+        
     def as_html(self, f=stdout, readable=True):
         if readable:
             newline = '\n'
@@ -259,6 +267,48 @@ class Card():
         filename = 'file://'+current_dir+'/.cards.html'
         webbrowser.open_new_tab(filename)
 
+def songs_to_json(song_titles, card_nbr):
+    """
+    Converts a list of song titles into a JSON string.
+
+    Args:
+        song_titles (list): A list of song titles (strings).
+
+    Returns:
+        str: A JSON string representation of the song titles.
+    """
+    if len(song_titles) != 25:
+        raise ValueError("The list must contain exactly 25 song titles.")
+    
+    # Create a dictionary to structure the data
+    print("===================================")
+    print("processing card number: ", card_nbr)
+    data = {"card_nbr": card_nbr, "songs": [{"id": i + 1, "title": title} for i, title in enumerate(song_titles)]}
+    ret_json = json.dumps(data)
+    print("===================================")
+    
+    # Convert the dictionary to a JSON string
+    return ret_json # , indent=4)
+
+
+
+
+class QRCodeGenerator():
+    def __init__(self, base_url) -> None:
+        self._save_path = '.'
+        self._base_url = base_url
+
+    def make_code(self, code_number):
+        # Create a QR code object with the URL
+        qr = qrcode.make(self._base_url+'/'+str(code_number))
+
+        # Save the QR code image with a filename based on the URL
+        # Removing special characters from the URL to create a clean filename
+        filename = self._base_url.replace("https://", "").replace("http://", "").replace("/", "_").replace(":", "") +str(code_number)+ ".png"
+        qr.save(filename, scale=2)
+
+        return(filename)          
+
 
 #-------------------------------------------------------------------
 # CardFactory class
@@ -266,6 +316,7 @@ class Card():
 class CardFactory():
     def __init__(self, input_file, game_monitor) -> None:
         self.center_figure = '<img src="center-img-small.png"/>'
+        self.qr_generator = QRCodeGenerator('http://svpserver5.ddns.net:8080/')
         self.input_titles = []
         self.input_ids = []
         self.input_track_ids = []
@@ -301,7 +352,7 @@ class CardFactory():
         self.track_ids = []
         self.track_info = dict()
         for i, w in enumerate(self.input_titles):
-            print("CardFactory: "+str(i)+"...."+w)
+            # print("CardFactory: "+str(i)+"...."+w)
             ## !!!
             self.title_idx.append(i)
             ## !!!
@@ -311,7 +362,7 @@ class CardFactory():
 
 
 
-    def make_card(self):
+    def make_card(self, card_nbr):
         # print('Creating mingo card from: ' + str(len(self.titles)) + ' song titles')
 
         ## The random sample below needs to contain unique selections, never any duplicates.
@@ -330,7 +381,10 @@ class CardFactory():
         ## !!!
 
         ## sheet = random.sample(self.titles, gridsize**2 - 1)
-        sheet.insert(math.ceil(len(sheet)/2), self.center_figure) 
+        qr_file_name = self.qr_generator.make_code(card_nbr)
+        center_figure = '<img src="'+qr_file_name+'"'+'/>'
+        # print(center_figure)
+        sheet.insert(math.ceil(len(sheet)/2), center_figure) 
         return Card(sheet, self.playlist_name, self.game_monitor, card_title_idxes)
 
     def get_track_ids(self):
@@ -349,14 +403,16 @@ class Game():
         self.sp = sp
         self.game_monitor = GameMonitor()
 
+        self.testval = '555'
+
         card_factory = CardFactory(input_file, self.game_monitor)
         self.playlist_name = card_factory.playlist_name
         self.cards = dict()
-        for _ in range(n_cards):
-            self.cards[_] = card_factory.make_card()
+        for card_nbr in range(n_cards):
+            self.cards[card_nbr] = card_factory.make_card(card_nbr)
 
         self.active_indexes = card_factory.get_active_indexes(); ## !!!
-        print("Active indexes: " , self.active_indexes)
+        # print("Active indexes: " , self.active_indexes)
         
         self.track_ids = card_factory.get_track_ids()
         self.track_info = card_factory.track_info
@@ -382,6 +438,9 @@ class Game():
 
         print(f'Created a Mingo game with {n_cards} cards')
 
+    def get_testval(self):
+        return self.testval
+
     def write_game_state(self):
         path = Path(game_state_pathname)
         with open(path, 'wb') as fp:
@@ -402,19 +461,25 @@ numbered 0 through {self.n_cards - 1}. Try again.')
             return self.cards[card_num] 
 
     def play_previous_track(self, back_index):
+        """
         if back_index:
             play_index = int(back_index)
         else:
             play_index = -1
-
-        track_idx = self.played_tracks[play_index]
-        print("Playing track idx: ",track_idx)
-        now_playing = self.track_info[track_idx]
-        artist = self.track_artists[track_idx]
-        self.current_track_idx = track_idx
-        print(f'\nNow playing: "{now_playing}" by "{artist}"\n')
-        track_to_play = self.track_ids[track_idx]
-        self.player.play_track(track_to_play)
+        """
+        play_index = int(back_index)
+        # print ('+++ number of played tracks: ', len(self.played_tracks))
+        if play_index < len(self.played_tracks):
+            track_idx = self.played_tracks[play_index]
+            print("Playing track idx: ",track_idx)
+            now_playing = self.track_info[track_idx]
+            artist = self.track_artists[track_idx]
+            self.current_track_idx = track_idx
+            print(f'\nNow playing: "{now_playing}" by "{artist}"\n')
+            track_to_play = self.track_ids[track_idx]
+            self.player.play_track(track_to_play)
+        else:
+            print('Invalid request to play that track.')
         
 
 
@@ -599,19 +664,20 @@ class GameMonitor():
 
         if len(self.played_track_names) > 0:
             print('\nList of tracks played so far:')
-            for (i, track_name) in enumerate(self.played_track_names, start=1):
+            for (i, track_name) in enumerate(self.played_track_names, start=0):
                 print(f'{i}\t{track_name}')
 
             print(f'\n{num_played} tracks have been played, \
 {num_remaining} tracks are left to play.\n')
 
             if replay_track:
+                print('+++ request to replay a track: ',replay_track)
                 replay_index = int(replay_track)
-                if replay_index < num_played + 1 and replay_index > 0:
+                if replay_index < num_played + 1 and replay_index >= 0:
                     if active_game:
-                    
+                        replay_index = replay_index
                         print (f'Replay index: {replay_index}')
-                        active_game.play_previous_track(replay_index-1)
+                        active_game.play_previous_track(replay_index) # was -1
                     else:
                         print('There is not an active game.')
                 else:
@@ -619,6 +685,45 @@ class GameMonitor():
             
         else:
             print('\nNo tracks have been played yet.\n')
+
+web_controller_url = os.environ['WEB_CONTROLLER_URL']
+print('Web controller url: ', web_controller_url)
+# web_controller_url = 'http://svpserver5.ddns.net:8080'
+# web_controller_url = 'http://localhost:8080'
+class WebMonitor():
+    def __init__(self, cmdprocessor, trigger_vote_count):
+        self._running = False
+        self._thread = None
+        self._cmdprocessor = cmdprocessor
+        self._trigger_vote_count = int(trigger_vote_count)
+
+    def start(self):
+        if not self._running:
+            # clear all stop requests before running the monitor
+            # otherwise 'old' stop requests can cause a track to start
+            # and stop immediately
+            requests.get(web_controller_url+'/clear')
+            print('trying to start WebMonitor')
+            self._running = True
+            self._thread = threading.Thread(target=self._run)
+            self._thread.start()
+            print('should be started')
+    
+    def stop(self):
+        self._running = False
+        if self._thread is not None:
+            self._thread.join()
+    
+    def _run(self):
+        while self._running:
+            # print('inside running')
+            stop_count = int(requests.get(web_controller_url+'/get_stop_count').content)
+            # print(stop_count)
+            if (stop_count>=self._trigger_vote_count):
+                requests.get(web_controller_url+'/clear')
+                self._cmdprocessor.do_nexttrack(self._cmdprocessor)
+            time.sleep(1)
+
 
 #-------------------------------------------------------------------
 # CommandProcessor class - Define the command language here. This
@@ -637,6 +742,31 @@ class CommandProcessor(cmd.Cmd):
 
         # Start by displaying the available playlists
         self.do_playlists()
+
+        self.web_monitor = None 
+
+    def do_webload(self, list_number):
+        if self.active_game:
+            for card_nbr in range(self.active_game.n_cards):
+                requests.post(web_controller_url+'/card_load',
+                                json=self.active_game.cards[card_nbr].as_json(card_nbr))
+
+        else:
+            print('There is not an active game. Create one using "makegame" and try again.')  
+
+#    def do_webload(self):
+
+    def do_auto(self, next_trigger_votes):
+            if next_trigger_votes:
+                self.web_monitor = WebMonitor(self, next_trigger_votes)
+                print('Web Monitor is active. Next song triggers when ',next_trigger_votes, ' are received')      
+                self.do_nexttrack(self)
+                self.web_monitor.start()
+                # Use the value of progress > 0 to determine when the nexttrack should
+                # start automatically
+                # progress = self.active_game.currently_playing()[0]
+            else:
+                print('You must enter the number of votes that will cause the next song to play')    
 
 
     """Process commands related to Spotify playlist management for the game of MINGO """
@@ -726,14 +856,14 @@ If no number is specified, all cards are displayed."""
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
-    """
+
     def do_backup(self):
 
         if self.active_game:
             self.active_game.play_previous_track()
         else:
             print('There is not an active game.')
-    """
+    
 
     def do_pause(self, _):
         """Pause the song that is currently playing. Use resume to resume playing."""
@@ -768,10 +898,11 @@ If no number is specified, all cards are displayed."""
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
-    def do_history(self, num_to_show):
-        """ Show the tracks played so far and tell how many tracks remain to be played. """
+    def do_history(self, replay_number):
+        """ Show the tracks played so far and tell how many tracks remain to be played. 
+        You can enter a track number to replay a track."""
         if self.active_game:
-            self.active_game.game_monitor.show_played_tracks(self.active_game, num_to_show)
+            self.active_game.game_monitor.show_played_tracks(self.active_game, replay_number)
         else:
            print('There is not an active game. Create one using "'"makegame"'" and try again.')  
 
@@ -820,7 +951,8 @@ If no number is specified, all cards are displayed."""
                 print('A saved game state has been restored. You can continue playing it now.')
 
             except Exception as error:
-                print(error)    
+                print(error)
+
 
 #-----------------------------------------
 # Global function definitions follow below
@@ -842,6 +974,8 @@ def display_general_exception(e):
 def cleanup_before_exiting(command_processor):
     if command_processor.active_game and command_processor.active_game.currently_playing()[1]:
         command_processor.active_game.pause()
+    if command_processor.web_monitor:
+        command_processor.web_monitor.stop()
 
 def restore_game_state():
     print(f'\nRestoring from file {game_state_pathname}')
@@ -857,6 +991,9 @@ def load_game_state(load_number):
     with open (path, 'rb') as fp:
         restored_game = pickle.load(fp)
     return restored_game
+
+
+
 
 #-----------------------------------------
 # The main processing is declared below
